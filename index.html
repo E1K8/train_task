@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css?family=Ubuntu:300,400,700&amp;subset=cyrillic" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,700&amp;subset=cyrillic" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,700&amp;subset=cyrillic" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Playfair+Display:400,400i|Tinos:400,400i&amp;subset=cyrillic" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body, html { height: 100%; margin: 0; padding: 0; }
+        body { background-color: #000; color: #fff; font-family: 'Roboto', sans-serif; }
+        h1 { font-family: "Playfair Display"; font-size: 30px; padding: 10px 0; margin: 0; }
+        .game-container { max-width: 1024px; margin: 0 auto; padding: 20px; }
+        .field-box { border: 2px solid #d0d0d0; margin-bottom: 20px; overflow: hidden; }
+        .field { position: relative; width: 1024px; height: 640px; background-color: #111; }
+        .tile { position: absolute; width: 32px; height: 32px; background-size: contain; background-repeat: no-repeat; }
+        
+        /* Стили для тайлов с изображениями */
+        .tile-W { background-image: url('images/tile-W.png'); }
+        .tile-F { background-image: url('images/tile-.png'); }
+        .tile-P { background-image: url('images/tile-P.png'); z-index: 10; }
+        .tile-E { background-image: url('images/tile-E.png'); z-index: 10; }
+        .tile-HP { background-image: url('images/tile-HP.png'); z-index: 9; }
+        .tile-SW { background-image: url('images/tile-SW.png'); z-index: 9; }
+        
+        /* Фолбэк стили если изображения не загрузятся */
+        .tile-W:not([style*="background-image"]), 
+        .tile-W[style*="background-image: none"] { background-color: #555; }
+        .tile-F:not([style*="background-image"]), 
+        .tile-F[style*="background-image: none"] { background-color: #333; }
+        .tile-P:not([style*="background-image"]), 
+        .tile-P[style*="background-image: none"] { background-color: #0066ff; }
+        .tile-E:not([style*="background-image"]), 
+        .tile-E[style*="background-image: none"] { background-color: #ff3333; }
+        .tile-HP:not([style*="background-image"]), 
+        .tile-HP[style*="background-image: none"] { background-color: #00cc00; }
+        .tile-SW:not([style*="background-image"]), 
+        .tile-SW[style*="background-image: none"] { background-color: #cccc00; }
+
+        .health-bar { position: absolute; bottom: 0; left: 0; height: 3px; background-color: #ff0000; z-index: 11; }
+        .hero-health { background-color: #00ff00 !important; }
+        .stats { background-color: #222; padding: 10px; margin-bottom: 10px; border-radius: 5px; }
+        .message { background-color: #333; padding: 10px; margin-bottom: 10px; border-radius: 5px; color: #ffcc00; display: none; }
+        .controls { background-color: #222; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>РОГАЛИК</h1>
+        <div class="stats">
+            Здоровье: <span id="health">100</span>% | 
+            Сила атаки: <span id="attack">10</span> | 
+            Убито врагов: <span id="kills">0</span>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="field-box">
+            <div class="field" id="game-field"></div>
+        </div>
+        <div class="controls">
+            <p>Управление: WASD - движение, Пробел - атака</p>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            //  Const
+            const MAP_WIDTH = 32;
+            const MAP_HEIGHT = 20;
+            const TILE_SIZE = 32;
+            
+            const TILE = {
+                WALL: 'W',
+                FLOOR: 'F',
+                HERO: 'P',
+                ENEMY: 'E',
+                POTION: 'HP',
+                SWORD: 'SW'
+            };
+
+            // State
+            const game = {
+                map: [],
+                hero: { x: 0, y: 0, health: 100, attack: 10, kills: 0 },
+                enemies: [],
+                items: [],
+                isGameOver: false,
+                imagesLoaded: false
+            };
+
+            // Проверка
+            function checkImagesLoaded() {
+                const images = [
+                    'images/tile-W.png',
+                    'images/tile-.png',
+                    'images/tile-P.png',
+                    'images/tile-E.png',
+                    'images/tile-HP.png',
+                    'images/tile-SW.png'
+                ];
+                
+                let loaded = 0;
+                const total = images.length;
+                
+                images.forEach(src => {
+                    const img = new Image();
+                    img.onload = img.onerror = function() {
+                        loaded++;
+                        if (loaded === total) {
+                            game.imagesLoaded = true;
+                            render();
+                        }
+                    };
+                    img.src = src;
+                });
+            }
+
+            // Init 
+            function init() {
+                checkImagesLoaded();
+                createMap();
+                generateDungeon();
+                placeItems();
+                placeHero();
+                placeEnemies();
+                setupControls();
+            }
+
+            // Map creat
+            function createMap() {
+                game.map = [];
+                for (let y = 0; y < MAP_HEIGHT; y++) {
+                    game.map[y] = [];
+                    for (let x = 0; x < MAP_WIDTH; x++) {
+                        game.map[y][x] = TILE.WALL;
+                    }
+                }
+            }
+
+            // Generation
+            function generateDungeon() {
+                // комнаты
+                const roomCount = randomInt(5, 10);
+                const rooms = [];
+                
+                for (let i = 0; i < roomCount; i++) {
+                    const width = randomInt(3, 8);
+                    const height = randomInt(3, 8);
+                    const x = randomInt(1, MAP_WIDTH - width - 1);
+                    const y = randomInt(1, MAP_HEIGHT - height - 1);
+                    
+                    const newRoom = { x, y, width, height };
+                    let canPlace = true;
+                    
+                    // Проверка на пересечение с другими комнатами
+                    for (const room of rooms) {
+                        if (isIntersecting(newRoom, room)) {
+                            canPlace = false;
+                            break;
+                        }
+                    }
+                    
+                    if (canPlace) {
+                        rooms.push(newRoom);
+                        createRoom(newRoom);
+                    }
+                }
+                
+                // Соединяем комнаты коридорами
+                for (let i = 1; i < rooms.length; i++) {
+                    const prev = rooms[i-1];
+                    const curr = rooms[i];
+                    
+                    // Горизонтальный коридор
+                    if (randomInt(0, 1)) {
+                        const startX = Math.min(prev.x + Math.floor(prev.width/2), curr.x + Math.floor(curr.width/2));
+                        const endX = Math.max(prev.x + Math.floor(prev.width/2), curr.x + Math.floor(curr.width/2));
+                        const y = prev.y + Math.floor(prev.height/2);
+                        
+                        for (let x = startX; x <= endX; x++) {
+                            game.map[y][x] = TILE.FLOOR;
+                        }
+                        
+                        // Вертикальный коридор
+                        const startY = Math.min(prev.y + Math.floor(prev.height/2), curr.y + Math.floor(curr.height/2));
+                        const endY = Math.max(prev.y + Math.floor(prev.height/2), curr.y + Math.floor(curr.height/2));
+                        const x = curr.x + Math.floor(curr.width/2);
+                        
+                        for (let y = startY; y <= endY; y++) {
+                            game.map[y][x] = TILE.FLOOR;
+                        }
+                    } else {
+                        // Вертикальный коридор
+                        const startY = Math.min(prev.y + Math.floor(prev.height/2), curr.y + Math.floor(curr.height/2));
+                        const endY = Math.max(prev.y + Math.floor(prev.height/2), curr.y + Math.floor(curr.height/2));
+                        const x = prev.x + Math.floor(prev.width/2);
+                        
+                        for (let y = startY; y <= endY; y++) {
+                            game.map[y][x] = TILE.FLOOR;
+                        }
+                        
+                        // Горизонтальный коридор
+                        const startX = Math.min(prev.x + Math.floor(prev.width/2), curr.x + Math.floor(curr.width/2));
+                        const endX = Math.max(prev.x + Math.floor(prev.width/2), curr.x + Math.floor(curr.width/2));
+                        const y = curr.y + Math.floor(curr.height/2);
+                        
+                        for (let x = startX; x <= endX; x++) {
+                            game.map[y][x] = TILE.FLOOR;
+                        }
+                    }
+                }
+                
+                // Добавляем случайные коридоры
+                const hCorridors = randomInt(3, 5);
+                for (let i = 0; i < hCorridors; i++) {
+                    const y = randomInt(1, MAP_HEIGHT - 2);
+                    for (let x = 0; x < MAP_WIDTH; x++) {
+                        game.map[y][x] = TILE.FLOOR;
+                    }
+                }
+                
+                const vCorridors = randomInt(3, 5);
+                for (let i = 0; i < vCorridors; i++) {
+                    const x = randomInt(1, MAP_WIDTH - 2);
+                    for (let y = 0; y < MAP_HEIGHT; y++) {
+                        game.map[y][x] = TILE.FLOOR;
+                    }
+                }
+            }
+            
+            function isIntersecting(room1, room2) {
+                return (
+                    room1.x < room2.x + room2.width &&
+                    room1.x + room1.width > room2.x &&
+                    room1.y < room2.y + room2.height &&
+                    room1.y + room1.height > room2.y
+                );
+            }
+            
+            function createRoom(room) {
+                for (let y = room.y; y < room.y + room.height; y++) {
+                    for (let x = room.x; x < room.x + room.width; x++) {
+                        game.map[y][x] = TILE.FLOOR;
+                    }
+                }
+            }
+
+            // Размещение предметов
+            function placeItems() {
+                // Мечи (2 шт)
+                placeRandomItems(TILE.SWORD, 2);
+                
+                // Зелья здоровья (10 шт)
+                placeRandomItems(TILE.POTION, 10);
+            }
+            
+            function placeRandomItems(itemType, count) {
+                for (let i = 0; i < count; i++) {
+                    let placed = false;
+                    while (!placed) {
+                        const x = randomInt(0, MAP_WIDTH - 1);
+                        const y = randomInt(0, MAP_HEIGHT - 1);
+                        
+                        if (game.map[y][x] === TILE.FLOOR && 
+                            !isHeroPosition(x, y) && 
+                            !isEnemyPosition(x, y) && 
+                            !isItemPosition(x, y)) {
+                            
+                            game.items.push({ x, y, type: itemType });
+                            placed = true;
+                        }
+                    }
+                }
+            }
+
+            // Размещение героя
+            function placeHero() {
+                let placed = false;
+                while (!placed) {
+                    const x = randomInt(0, MAP_WIDTH - 1);
+                    const y = randomInt(0, MAP_HEIGHT - 1);
+                    
+                    if (game.map[y][x] === TILE.FLOOR && 
+                        !isEnemyPosition(x, y) && 
+                        !isItemPosition(x, y)) {
+                        
+                        game.hero.x = x;
+                        game.hero.y = y;
+                        placed = true;
+                    }
+                }
+            }
+
+            // Размещение врагов
+            function placeEnemies() {
+                const enemyCount = 10;
+                
+                for (let i = 0; i < enemyCount; i++) {
+                    let placed = false;
+                    while (!placed) {
+                        const x = randomInt(0, MAP_WIDTH - 1);
+                        const y = randomInt(0, MAP_HEIGHT - 1);
+                        
+                        if (game.map[y][x] === TILE.FLOOR && 
+                            !isHeroPosition(x, y) && 
+                            !isEnemyPosition(x, y) && 
+                            !isItemPosition(x, y)) {
+                            
+                            game.enemies.push({ x, y, health: 100 });
+                            placed = true;
+                        }
+                    }
+                }
+            }
+
+            // Проверка позиций
+            function isHeroPosition(x, y) {
+                return game.hero.x === x && game.hero.y === y;
+            }
+            
+            function isEnemyPosition(x, y) {
+                return game.enemies.some(e => e.x === x && e.y === y);
+            }
+            
+            function isItemPosition(x, y) {
+                return game.items.some(i => i.x === x && i.y === y);
+            }
+            
+            function getEnemyAt(x, y) {
+                return game.enemies.find(e => e.x === x && e.y === y);
+            }
+            
+            function getItemAt(x, y) {
+                return game.items.find(i => i.x === x && i.y === y);
+            }
+
+            // Отрисовка игры
+            function render() {
+                const field = $('#game-field');
+                field.empty();
+                
+                // Отрисовка карты (стены и пол)
+                for (let y = 0; y < MAP_HEIGHT; y++) {
+                    for (let x = 0; x < MAP_WIDTH; x++) {
+                        const tileType = game.map[y][x];
+                        const tile = $(`<div class="tile tile-${tileType}"></div>`);
+                        tile.css({
+                            left: x * TILE_SIZE,
+                            top: y * TILE_SIZE
+                        });
+                        field.append(tile);
+                    }
+                }
+                
+                // Отрисовка предметов
+                game.items.forEach(item => {
+                    const itemTile = $(`<div class="tile tile-${item.type}"></div>`);
+                    itemTile.css({
+                        left: item.x * TILE_SIZE,
+                        top: item.y * TILE_SIZE
+                    });
+                    field.append(itemTile);
+                });
+                
+                // Отрисовка врагов
+                game.enemies.forEach(enemy => {
+                    const enemyTile = $('<div class="tile tile-E"></div>');
+                    enemyTile.css({
+                        left: enemy.x * TILE_SIZE,
+                        top: enemy.y * TILE_SIZE
+                    });
+                    
+                    // Здоровье врага
+                    const healthBar = $('<div class="health-bar"></div>');
+                    healthBar.css('width', enemy.health + '%');
+                    enemyTile.append(healthBar);
+                    
+                    field.append(enemyTile);
+                });
+                
+                // Отрисовка героя
+                const heroTile = $('<div class="tile tile-P"></div>');
+                heroTile.css({
+                    left: game.hero.x * TILE_SIZE,
+                    top: game.hero.y * TILE_SIZE
+                });
+                
+                // Здоровье героя
+                const heroHealth = $('<div class="health-bar hero-health"></div>');
+                heroHealth.css('width', game.hero.health + '%');
+                heroTile.append(heroHealth);
+                
+                field.append(heroTile);
+                
+                // Обновление статистики
+                $('#health').text(game.hero.health);
+                $('#attack').text(game.hero.attack);
+                $('#kills').text(game.hero.kills);
+            }
+
+            // Управление
+            function setupControls() {
+                $(document).keydown(function(e) {
+                    if (game.isGameOver) return;
+                    
+                    if (e.key === ' ' || e.key === 'Spacebar') {
+                        heroAttack();
+                    } else {
+                        let moved = false;
+                        let dx = 0;
+                        let dy = 0;
+                        
+                        switch (e.key.toLowerCase()) {
+                            case 'w': dy = -1; break;
+                            case 'a': dx = -1; break;
+                            case 's': dy = 1; break;
+                            case 'd': dx = 1; break;
+                        }
+                        
+                        if (dx !== 0 || dy !== 0) {
+                            moved = tryMoveHero(dx, dy);
+                        }
+                        
+                        if (moved) {
+                            enemyTurns();
+                        }
+                    }
+                    
+                    if (!game.isGameOver) {
+                        render();
+                        checkGameState();
+                    }
+                });
+            }
+            
+            // Попытка перемещения героя
+            function tryMoveHero(dx, dy) {
+                const newX = game.hero.x + dx;
+                const newY = game.hero.y + dy;
+                
+                // Проверка границ
+                if (newX < 0 || newX >= MAP_WIDTH || newY < 0 || newY >= MAP_HEIGHT) {
+                    return false;
+                }
+                
+                // Проверка на стену
+                if (game.map[newY][newX] === TILE.WALL) {
+                    return false;
+                }
+                
+                // Проверка на врага
+                if (isEnemyPosition(newX, newY)) {
+                    return false;
+                }
+                
+                // Проверка на предметы
+                const item = getItemAt(newX, newY);
+                if (item) {
+                    if (item.type === TILE.SWORD) {
+                        game.hero.attack += 5;
+                        showMessage("Вы нашли меч! Сила атаки +5!");
+                    } else if (item.type === TILE.POTION) {
+                        game.hero.health = Math.min(100, game.hero.health + 20);
+                        showMessage("Зелье здоровья! +20 HP!");
+                    }
+                    
+                    // Удаляем предмет
+                    game.items = game.items.filter(i => !(i.x === newX && i.y === newY));
+                }
+                
+                // Перемещаем героя
+                game.hero.x = newX;
+                game.hero.y = newY;
+                return true;
+            }
+            
+            // Атака героя
+            function heroAttack() {
+                let attacked = false;
+                
+                // Проверяем все соседние клетки
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        
+                        const x = game.hero.x + dx;
+                        const y = game.hero.y + dy;
+                        
+                        if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+                            const enemy = getEnemyAt(x, y);
+                            if (enemy) {
+                                enemy.health -= game.hero.attack;
+                                attacked = true;
+                                
+                                if (enemy.health <= 0) {
+                                    game.enemies = game.enemies.filter(e => !(e.x === x && e.y === y));
+                                    game.hero.kills++;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (attacked) {
+                    showMessage("Вы атаковали врагов!");
+                } else {
+                    showMessage("Нет врагов рядом!");
+                }
+            }
+            
+            // Ход врагов
+            function enemyTurns() {
+                game.enemies.forEach(enemy => {
+                    // 50% шанс двигаться к герою, 50% случайное движение
+                    if (Math.random() < 0.5) {
+                        // Движение к герою
+                        const dx = Math.sign(game.hero.x - enemy.x);
+                        const dy = Math.sign(game.hero.y - enemy.y);
+                        
+                        // Предпочитаем движение по одной оси
+                        if (Math.random() < 0.5) {
+                            tryMoveEnemy(enemy, dx, 0) || tryMoveEnemy(enemy, 0, dy);
+                        } else {
+                            tryMoveEnemy(enemy, 0, dy) || tryMoveEnemy(enemy, dx, 0);
+                        }
+                    } else {
+                        // Случайное движение
+                        const dirs = [
+                            {dx: -1, dy: 0}, {dx: 1, dy: 0},
+                            {dx: 0, dy: -1}, {dx: 0, dy: 1}
+                        ];
+                        const dir = dirs[randomInt(0, 3)];
+                        tryMoveEnemy(enemy, dir.dx, dir.dy);
+                    }
+                    
+                    // Атака героя, если рядом
+                    if (Math.abs(enemy.x - game.hero.x) <= 1 && 
+                        Math.abs(enemy.y - game.hero.y) <= 1) {
+                        game.hero.health -= 5;
+                        showMessage("Враг атаковал вас! -5 HP!");
+                    }
+                });
+            }
+            
+            // Попытка перемещения врага
+            function tryMoveEnemy(enemy, dx, dy) {
+                const newX = enemy.x + dx;
+                const newY = enemy.y + dy;
+                
+                // Проверка границ
+                if (newX < 0 || newX >= MAP_WIDTH || newY < 0 || newY >= MAP_HEIGHT) {
+                    return false;
+                }
+                
+                // Проверка на стену
+                if (game.map[newY][newX] === TILE.WALL) {
+                    return false;
+                }
+                
+                // Проверка на героя
+                if (isHeroPosition(newX, newY)) {
+                    return false;
+                }
+                
+                // Проверка на других врагов
+                if (isEnemyPosition(newX, newY)) {
+                    return false;
+                }
+                
+                // Проверка на предметы
+                if (isItemPosition(newX, newY)) {
+                    return false;
+                }
+                
+                // Перемещаем врага
+                enemy.x = newX;
+                enemy.y = newY;
+                return true;
+            }
+            
+            function checkGameState() {
+                if (game.hero.health <= 0) {
+                    game.isGameOver = true;
+                    showMessage("Игра окончена! Вы погибли!", true);
+                } else if (game.enemies.length === 0) {
+                    game.isGameOver = true;
+                    showMessage("Победа! Все враги уничтожены!", true);
+                }
+            }
+            
+            // Показать сообщение
+            function showMessage(text, permanent = false) {
+                const message = $('#message');
+                message.text(text).stop().fadeIn();
+                
+                if (!permanent) {
+                    setTimeout(() => message.fadeOut(), 2000);
+                }
+            }
+            
+            // Вспомогательные функции
+            function randomInt(min, max) {
+                return Math.floor(Math.random() * (max - min + 1)) + min;
+            }
+
+            // Запуск игры
+            init();
+        })();
+    </script>
+</body>
+</html>
